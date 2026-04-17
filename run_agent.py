@@ -2187,6 +2187,27 @@ class AIAgent:
             return {"max_completion_tokens": value}
         return {"max_tokens": value}
 
+    def _matches_anthropic_compatible_model(self) -> bool:
+        """Return True when ``self.model`` matches a known Anthropic-compatible
+        model in ``_ANTHROPIC_OUTPUT_LIMITS``.
+
+        Used to decide whether to inject an explicit ``max_tokens`` fallback
+        for chat_completions requests whose upstream proxy translates to
+        Anthropic's Messages API (which requires ``max_tokens`` as a mandatory
+        field).  The check is proxy-agnostic: any base_url is fine, only the
+        model name matters.  Unknown models return False so we don't risk
+        sending an oversized ``max_tokens`` to providers with their own
+        (possibly lower) ceilings.
+        """
+        if not self.model:
+            return False
+        try:
+            from agent.anthropic_adapter import _ANTHROPIC_OUTPUT_LIMITS
+        except Exception:
+            return False
+        m = self.model.lower().replace(".", "-")
+        return any(key in m for key in _ANTHROPIC_OUTPUT_LIMITS)
+
     def _has_content_after_think_block(self, content: str) -> bool:
         """
         Check if content has actual text after any reasoning/thinking blocks.
@@ -7207,14 +7228,28 @@ class AIAgent:
             # (the documented max output for qwen3-coder models) so the
             # model has adequate output budget for tool calls.
             api_kwargs.update(self._max_tokens_param(65536))
-        elif (self._is_openrouter_url() or "nousresearch" in self._base_url_lower) and "claude" in (self.model or "").lower():
-            # OpenRouter and Nous Portal translate requests to Anthropic's
-            # Messages API, which requires max_tokens as a mandatory field.
-            # When we omit it, the proxy picks a default that can be too
-            # low — the model spends its output budget on thinking and has
-            # almost nothing left for the actual response (especially large
-            # tool calls like write_file).  Sending the model's real output
-            # limit ensures full capacity.
+        elif self._matches_anthropic_compatible_model():
+            # Any Anthropic-compatible model served via a chat_completions
+            # proxy needs an explicit max_tokens — the upstream Messages API
+            # requires it as a mandatory field, and when omitted proxies pick
+            # their own defaults that can be too low:
+            #   • AWS Bedrock historically defaults to 4096 (reasoning + one
+            #     write_file tool call easily exceeds it → finish_reason=length
+            #     → continuation retries → rollback → user-visible truncation)
+            #   • OpenRouter and Nous Portal also pick low defaults
+            #   • Self-hosted LiteLLM / vLLM / custom gateways: unpredictable
+            #
+            # Previously this fallback was gated on the base_url being
+            # OpenRouter or Nous, which silently excluded every other proxy
+            # (Bedrock, NVIDIA inference, self-hosted gateways, …).  The
+            # gate is now the model name itself: if the model matches a
+            # known Anthropic-compatible entry in _ANTHROPIC_OUTPUT_LIMITS,
+            # we send the documented output limit regardless of which
+            # proxy URL serves it.
+            #
+            # Anthropic's own API uses api_mode='anthropic_messages' and
+            # never reaches this branch, so there is no conflict with the
+            # first-party SDK.
             try:
                 from agent.anthropic_adapter import _get_anthropic_max_output
                 _model_output_limit = _get_anthropic_max_output(self.model)

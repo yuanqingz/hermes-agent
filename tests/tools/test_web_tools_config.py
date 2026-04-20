@@ -308,6 +308,9 @@ class TestBackendSelection:
         "TOOL_GATEWAY_SCHEME",
         "TOOL_GATEWAY_USER_TOKEN",
         "TAVILY_API_KEY",
+        "CUSTOM_SEARCH_API_KEY",
+        "CUSTOM_SEARCH_BASE_URL",
+        "CUSTOM_SEARCH_MODEL",
     )
 
     def setup_method(self):
@@ -439,6 +442,38 @@ class TestBackendSelection:
              patch.dict(os.environ, {"PARALLEL_API_KEY": "test-key"}):
             assert _get_backend() == "parallel"
 
+    # ── Custom backend (OpenAI-compatible chat completions) ───────────
+
+    def test_config_custom(self):
+        """web.backend=custom in config → 'custom' regardless of other keys."""
+        from tools.web_tools import _get_backend
+        with patch("tools.web_tools._load_web_config", return_value={"backend": "custom"}), \
+             patch.dict(os.environ, {"FIRECRAWL_API_KEY": "fc-test"}):
+            assert _get_backend() == "custom"
+
+    def test_config_custom_case_insensitive(self):
+        """web.backend=Custom (mixed case) → 'custom'."""
+        from tools.web_tools import _get_backend
+        with patch("tools.web_tools._load_web_config", return_value={"backend": "Custom"}):
+            assert _get_backend() == "custom"
+
+    def test_fallback_custom_only_key(self):
+        """Only CUSTOM_SEARCH_API_KEY set → 'custom'."""
+        from tools.web_tools import _get_backend
+        with patch("tools.web_tools._load_web_config", return_value={}), \
+             patch.dict(os.environ, {"CUSTOM_SEARCH_API_KEY": "sk-custom"}):
+            assert _get_backend() == "custom"
+
+    def test_fallback_custom_with_firecrawl_prefers_firecrawl(self):
+        """Custom + Firecrawl keys, no config → 'firecrawl' (lower priority for custom)."""
+        from tools.web_tools import _get_backend
+        with patch("tools.web_tools._load_web_config", return_value={}), \
+             patch.dict(os.environ, {
+                 "CUSTOM_SEARCH_API_KEY": "sk-custom",
+                 "FIRECRAWL_API_KEY": "fc-test",
+             }):
+            assert _get_backend() == "firecrawl"
+
 
 class TestParallelClientConfig:
     """Test suite for Parallel client initialization."""
@@ -533,6 +568,9 @@ class TestCheckWebApiKey:
         "TOOL_GATEWAY_SCHEME",
         "TOOL_GATEWAY_USER_TOKEN",
         "TAVILY_API_KEY",
+        "CUSTOM_SEARCH_API_KEY",
+        "CUSTOM_SEARCH_BASE_URL",
+        "CUSTOM_SEARCH_MODEL",
     )
 
     def setup_method(self):
@@ -610,8 +648,333 @@ class TestCheckWebApiKey:
                     from tools.web_tools import check_web_api_key
                     assert check_web_api_key() is True
 
+    # ── Custom backend ───────────────────────────────────────────────
+
+    def test_custom_key_only(self):
+        """CUSTOM_SEARCH_API_KEY set → check_web_api_key() is True."""
+        with patch.dict(os.environ, {"CUSTOM_SEARCH_API_KEY": "sk-custom"}):
+            from tools.web_tools import check_web_api_key
+            assert check_web_api_key() is True
+
+    def test_custom_backend_configured_without_key_returns_false(self):
+        """backend=custom in config but no CUSTOM_SEARCH_API_KEY and no
+        web.custom_api_key → check_web_api_key() returns False."""
+        with patch("tools.web_tools._load_web_config", return_value={"backend": "custom"}):
+            from tools.web_tools import check_web_api_key
+            assert check_web_api_key() is False
+
+    def test_custom_api_key_via_config_returns_true(self):
+        """web.custom_api_key in config.yaml (no env var) → True.
+
+        Documents the unique env-OR-config key resolution path for custom,
+        where _is_backend_available consults both _has_env and the config dict.
+        """
+        with patch(
+            "tools.web_tools._load_web_config",
+            return_value={"backend": "custom", "custom_api_key": "sk-from-config"},
+        ):
+            from tools.web_tools import check_web_api_key
+            assert check_web_api_key() is True
+
 
 def test_web_requires_env_includes_exa_key():
     from tools.web_tools import _web_requires_env
 
     assert "EXA_API_KEY" in _web_requires_env()
+
+
+def test_web_requires_env_includes_custom_search_key():
+    """CUSTOM_SEARCH_API_KEY is surfaced as a web-backend env dep."""
+    from tools.web_tools import _web_requires_env
+
+    assert "CUSTOM_SEARCH_API_KEY" in _web_requires_env()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Custom OpenAI-compatible chat-completions backend
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TestCustomBackendHelpers:
+    """Tests for _get_custom_base_url / _get_custom_model / _custom_headers.
+
+    All three helpers follow the same resolution order:
+      1. CUSTOM_SEARCH_* environment variable
+      2. web.custom_* in config.yaml
+      3. (model only) default "sonar"
+    """
+
+    _ENV_KEYS = (
+        "CUSTOM_SEARCH_API_KEY",
+        "CUSTOM_SEARCH_BASE_URL",
+        "CUSTOM_SEARCH_MODEL",
+    )
+
+    def setup_method(self):
+        for key in self._ENV_KEYS:
+            os.environ.pop(key, None)
+
+    def teardown_method(self):
+        for key in self._ENV_KEYS:
+            os.environ.pop(key, None)
+
+    # ── base_url ──────────────────────────────────────────────────────
+
+    def test_base_url_env_takes_priority_over_config(self):
+        from tools.web_tools import _get_custom_base_url
+        with patch("tools.web_tools._load_web_config",
+                   return_value={"custom_base_url": "https://config.example.com"}), \
+             patch.dict(os.environ, {"CUSTOM_SEARCH_BASE_URL": "https://env.example.com"}):
+            assert _get_custom_base_url() == "https://env.example.com"
+
+    def test_base_url_config_fallback(self):
+        from tools.web_tools import _get_custom_base_url
+        with patch("tools.web_tools._load_web_config",
+                   return_value={"custom_base_url": "https://config.example.com"}):
+            assert _get_custom_base_url() == "https://config.example.com"
+
+    def test_base_url_strips_trailing_slash(self):
+        """Both env and config values are rstrip'd so callers can safely
+        concatenate /chat/completions without duplicating slashes."""
+        from tools.web_tools import _get_custom_base_url
+        with patch("tools.web_tools._load_web_config", return_value={}), \
+             patch.dict(os.environ, {"CUSTOM_SEARCH_BASE_URL": "https://env.example.com/"}):
+            assert _get_custom_base_url() == "https://env.example.com"
+
+        with patch("tools.web_tools._load_web_config",
+                   return_value={"custom_base_url": "https://config.example.com/"}):
+            assert _get_custom_base_url() == "https://config.example.com"
+
+    def test_base_url_missing_raises_value_error(self):
+        from tools.web_tools import _get_custom_base_url
+        with patch("tools.web_tools._load_web_config", return_value={}):
+            with pytest.raises(ValueError, match="CUSTOM_SEARCH_BASE_URL"):
+                _get_custom_base_url()
+
+    # ── model ─────────────────────────────────────────────────────────
+
+    def test_model_env_takes_priority_over_config(self):
+        from tools.web_tools import _get_custom_model
+        with patch("tools.web_tools._load_web_config",
+                   return_value={"custom_model": "config-model"}), \
+             patch.dict(os.environ, {"CUSTOM_SEARCH_MODEL": "env-model"}):
+            assert _get_custom_model() == "env-model"
+
+    def test_model_config_fallback(self):
+        from tools.web_tools import _get_custom_model
+        with patch("tools.web_tools._load_web_config",
+                   return_value={"custom_model": "config-model"}):
+            assert _get_custom_model() == "config-model"
+
+    def test_model_default_is_sonar(self):
+        """Neither env nor config set → "sonar" (Perplexity's default model)."""
+        from tools.web_tools import _get_custom_model
+        with patch("tools.web_tools._load_web_config", return_value={}):
+            assert _get_custom_model() == "sonar"
+
+    # ── headers / api key ─────────────────────────────────────────────
+
+    def test_headers_returns_bearer_auth(self):
+        from tools.web_tools import _custom_headers
+        with patch("tools.web_tools._load_web_config", return_value={}), \
+             patch.dict(os.environ, {"CUSTOM_SEARCH_API_KEY": "sk-abc"}):
+            headers = _custom_headers()
+        assert headers["Authorization"] == "Bearer sk-abc"
+        assert headers["Content-Type"] == "application/json"
+
+    def test_headers_config_fallback(self):
+        from tools.web_tools import _custom_headers
+        with patch("tools.web_tools._load_web_config",
+                   return_value={"custom_api_key": "sk-from-config"}):
+            assert _custom_headers()["Authorization"] == "Bearer sk-from-config"
+
+    def test_headers_missing_key_raises_value_error(self):
+        from tools.web_tools import _custom_headers
+        with patch("tools.web_tools._load_web_config", return_value={}):
+            with pytest.raises(ValueError, match="CUSTOM_SEARCH_API_KEY"):
+                _custom_headers()
+
+
+class TestCustomSearch:
+    """Tests for _custom_search() response-shape normalization.
+
+    Priority of the three response-extraction paths (highest first):
+      1. search_results[]  — Perplexity Sonar native shape
+      2. citations[]       — generic OpenAI-compatible citations list
+      3. choices[0].message.content  — plain answer text as single result
+    """
+
+    def test_search_results_path(self):
+        """search_results[] entries map to title/url/description/position."""
+        from tools.web_tools import _custom_search
+        fake_response = {
+            "search_results": [
+                {"title": "First", "url": "https://a.example/1", "snippet": "snippet 1"},
+                {"title": "Second", "url": "https://a.example/2", "content": "content 2"},
+            ],
+        }
+        with patch("tools.web_tools._custom_chat", return_value=fake_response):
+            result = _custom_search("query", limit=5)
+
+        assert result["success"] is True
+        web = result["data"]["web"]
+        assert len(web) == 2
+        assert web[0] == {
+            "title": "First",
+            "url": "https://a.example/1",
+            "description": "snippet 1",
+            "position": 1,
+        }
+        # "content" field also accepted when "snippet" absent
+        assert web[1]["description"] == "content 2"
+        assert web[1]["position"] == 2
+
+    def test_citations_as_string_list(self):
+        """citations[] as plain URL strings → title/description empty, url populated."""
+        from tools.web_tools import _custom_search
+        fake_response = {
+            "citations": ["https://a.example/1", "https://a.example/2"],
+        }
+        with patch("tools.web_tools._custom_chat", return_value=fake_response):
+            result = _custom_search("query", limit=5)
+
+        web = result["data"]["web"]
+        assert len(web) == 2
+        assert web[0] == {
+            "title": "",
+            "url": "https://a.example/1",
+            "description": "",
+            "position": 1,
+        }
+
+    def test_citations_as_dict_list(self):
+        """citations[] as dicts → title/url/snippet mapped through."""
+        from tools.web_tools import _custom_search
+        fake_response = {
+            "citations": [
+                {"title": "T1", "url": "https://a.example/1", "snippet": "S1"},
+                {"title": "T2", "url": "https://a.example/2", "content": "C2"},
+            ],
+        }
+        with patch("tools.web_tools._custom_chat", return_value=fake_response):
+            result = _custom_search("query", limit=5)
+
+        web = result["data"]["web"]
+        assert web[0]["title"] == "T1"
+        assert web[0]["description"] == "S1"
+        # content field serves as fallback description when snippet missing
+        assert web[1]["description"] == "C2"
+
+    def test_answer_text_fallback(self):
+        """Neither search_results nor citations → single synthetic result
+        titled 'Search Answer' carrying the model's content."""
+        from tools.web_tools import _custom_search
+        fake_response = {
+            "choices": [{"message": {"content": "The sky is blue because of Rayleigh scattering."}}],
+        }
+        with patch("tools.web_tools._custom_chat", return_value=fake_response):
+            result = _custom_search("why is the sky blue", limit=5)
+
+        web = result["data"]["web"]
+        assert len(web) == 1
+        assert web[0]["title"] == "Search Answer"
+        assert web[0]["url"] == ""
+        assert web[0]["description"].startswith("The sky is blue")
+        assert web[0]["position"] == 1
+
+    def test_empty_response_yields_empty_web_list(self):
+        """No search_results, no citations, no choices → empty web list,
+        success still True (caller decides how to report no-results)."""
+        from tools.web_tools import _custom_search
+        with patch("tools.web_tools._custom_chat", return_value={}):
+            result = _custom_search("query", limit=5)
+
+        assert result == {"success": True, "data": {"web": []}}
+
+    def test_respects_limit_on_search_results(self):
+        """search_results with more items than limit → truncated to limit."""
+        from tools.web_tools import _custom_search
+        fake_response = {
+            "search_results": [
+                {"title": f"T{i}", "url": f"https://a.example/{i}", "snippet": "s"}
+                for i in range(10)
+            ],
+        }
+        with patch("tools.web_tools._custom_chat", return_value=fake_response):
+            result = _custom_search("query", limit=3)
+
+        assert len(result["data"]["web"]) == 3
+        assert [r["position"] for r in result["data"]["web"]] == [1, 2, 3]
+
+    def test_search_results_preferred_over_citations(self):
+        """When both fields are present, search_results wins; citations ignored."""
+        from tools.web_tools import _custom_search
+        fake_response = {
+            "search_results": [
+                {"title": "SR", "url": "https://sr.example", "snippet": "sr"},
+            ],
+            "citations": ["https://citation.example"],
+        }
+        with patch("tools.web_tools._custom_chat", return_value=fake_response):
+            result = _custom_search("query", limit=5)
+
+        web = result["data"]["web"]
+        assert len(web) == 1
+        assert web[0]["url"] == "https://sr.example"
+
+
+class TestCustomExtract:
+    """Tests for _custom_extract() — one chat call per URL with error isolation."""
+
+    def test_multi_url_success(self):
+        from tools.web_tools import _custom_extract
+        responses = [
+            {"choices": [{"message": {"content": "# Page 1\n\nContent of page 1."}}]},
+            {"choices": [{"message": {"content": "# Page 2\n\nContent of page 2."}}]},
+        ]
+        with patch("tools.web_tools._custom_chat", side_effect=responses):
+            docs = _custom_extract(["https://a.example/1", "https://a.example/2"])
+
+        assert len(docs) == 2
+        assert docs[0]["url"] == "https://a.example/1"
+        assert docs[0]["content"].startswith("# Page 1")
+        assert docs[0]["raw_content"] == docs[0]["content"]
+        assert docs[0]["metadata"] == {"sourceURL": "https://a.example/1", "title": ""}
+        assert "error" not in docs[0]
+
+    def test_per_url_exception_isolation(self):
+        """If the chat call for one URL raises, other URLs still return content
+        and the failed URL gets an error-carrying stub document."""
+        from tools.web_tools import _custom_extract
+
+        def fake_chat(prompt: str):
+            if "fail.example" in prompt:
+                raise RuntimeError("upstream 502")
+            return {"choices": [{"message": {"content": "ok content"}}]}
+
+        with patch("tools.web_tools._custom_chat", side_effect=fake_chat):
+            docs = _custom_extract([
+                "https://a.example/1",
+                "https://fail.example/boom",
+                "https://a.example/3",
+            ])
+
+        assert len(docs) == 3
+        assert docs[0]["content"] == "ok content"
+        assert "error" not in docs[0]
+
+        assert docs[1]["url"] == "https://fail.example/boom"
+        assert docs[1]["content"] == ""
+        assert docs[1]["raw_content"] == ""
+        assert docs[1]["error"] == "upstream 502"
+        assert docs[1]["metadata"] == {"sourceURL": "https://fail.example/boom"}
+
+        assert docs[2]["content"] == "ok content"
+        assert "error" not in docs[2]
+
+    def test_empty_url_list_returns_empty_list(self):
+        from tools.web_tools import _custom_extract
+        with patch("tools.web_tools._custom_chat") as mock_chat:
+            docs = _custom_extract([])
+        assert docs == []
+        mock_chat.assert_not_called()

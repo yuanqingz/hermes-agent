@@ -1082,11 +1082,11 @@ code_execution:
 
 ## Web Search Backends
 
-The `web_search`, `web_extract`, and `web_crawl` tools support four backend providers. Configure the backend in `config.yaml` or via `hermes tools`:
+The `web_search`, `web_extract`, and `web_crawl` tools support five backend providers. Configure the backend in `config.yaml` or via `hermes tools`:
 
 ```yaml
 web:
-  backend: firecrawl    # firecrawl | parallel | tavily | exa
+  backend: firecrawl    # firecrawl | parallel | tavily | exa | custom
 ```
 
 | Backend | Env Var | Search | Extract | Crawl |
@@ -1095,12 +1095,25 @@ web:
 | **Parallel** | `PARALLEL_API_KEY` | ✔ | ✔ | — |
 | **Tavily** | `TAVILY_API_KEY` | ✔ | ✔ | ✔ |
 | **Exa** | `EXA_API_KEY` | ✔ | ✔ | — |
+| **Custom** (OpenAI-compatible) | `CUSTOM_SEARCH_API_KEY` | ✔ | ✔ | — |
 
 **Backend selection:** If `web.backend` is not set, the backend is auto-detected from available API keys. If only `EXA_API_KEY` is set, Exa is used. If only `TAVILY_API_KEY` is set, Tavily is used. If only `PARALLEL_API_KEY` is set, Parallel is used. Otherwise Firecrawl is the default.
 
 **Self-hosted Firecrawl:** Set `FIRECRAWL_API_URL` to point at your own instance. When a custom URL is set, the API key becomes optional (set `USE_DB_AUTHENTICATION=false` on the server to disable auth).
 
 **Parallel search modes:** Set `PARALLEL_SEARCH_MODE` to control search behavior — `fast`, `one-shot`, or `agentic` (default: `agentic`).
+
+**Custom OpenAI-compatible backend:** For any endpoint that speaks OpenAI `/chat/completions` and returns search citations inline — e.g. Perplexity Sonar, ChatGPT with browsing, or a self-hosted LLM with web access:
+
+```yaml
+web:
+  backend: custom
+  custom_base_url: https://api.perplexity.ai
+  custom_model: sonar                 # default: sonar
+  custom_api_key: sk-xxx              # or via CUSTOM_SEARCH_API_KEY env
+```
+
+Resolution order for each field is `CUSTOM_SEARCH_*` env var → `web.custom_*` in config.yaml → (model only) default `sonar`. `web_search` extracts structured results from the response's `search_results[]` (Perplexity native) or `citations[]` field, falling back to the model's answer text. `web_extract` issues one chat call per URL with per-URL error isolation.
 
 ## Browser
 

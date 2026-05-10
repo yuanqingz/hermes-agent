@@ -23,8 +23,11 @@ Both are configured through a single backend selection. Providers are chosen via
 | **Tavily** | `TAVILY_API_KEY` | ✔ | ✔ | ✔ | 1 000 searches/mo |
 | **Exa** | `EXA_API_KEY` | ✔ | ✔ | — | 1 000 searches/mo |
 | **Parallel** | `PARALLEL_API_KEY` | ✔ | ✔ | — | Paid |
+| **OpenAI-compatible** | `OPENAI_COMPAT_SEARCH_*` | ✔ | — | — | Depends on provider |
 
 **Per-capability split:** you can use different providers for search and extract independently — for example SearXNG (free) for search and Firecrawl for extract. See [Per-capability configuration](#per-capability-configuration) below.
+
+**OpenAI-compatible search** lets you plug any `/chat/completions` endpoint that returns search citations (Perplexity Sonar, ChatGPT via a browsing proxy, LiteLLM/vLLM search wrappers) into `web_search`. Like SearXNG, it's search-only — pair with an extract provider. See [OpenAI-compatible search](#openai-compatible-search) below.
 
 :::tip Nous Subscribers
 If you have a paid [Nous Portal](https://portal.nousresearch.com) subscription, web search and extract are available through the **[Tool Gateway](tool-gateway.md)** via managed Firecrawl — no API key needed. Run `hermes tools` to enable it.
@@ -269,6 +272,43 @@ Get access at [parallel.ai](https://parallel.ai).
 
 ---
 
+### OpenAI-compatible search
+
+Plug any OpenAI-compatible `/chat/completions` endpoint that returns citations into `web_search`. Concrete targets:
+
+- **Perplexity Sonar** (`https://api.perplexity.ai`) — returns `search_results` + `citations` on every response
+- **ChatGPT with browsing** via a proxy that preserves citations
+- **Self-hosted LiteLLM / vLLM / router** wrapping a search-augmented model that returns the same envelope
+
+This backend is **search-only** — the chat-completion shape is not a reliable substrate for `web_extract` (it invites the model to fabricate page content rather than actually fetch it). Pair with Firecrawl / Tavily / Exa / Parallel when you also need extract.
+
+```bash
+# ~/.hermes/.env
+OPENAI_COMPAT_SEARCH_BASE_URL=https://api.perplexity.ai
+OPENAI_COMPAT_SEARCH_API_KEY=your-key-here
+OPENAI_COMPAT_SEARCH_MODEL=sonar
+```
+
+Then set it as the **search** backend explicitly (this provider is never auto-selected — it only activates when you opt in by name):
+
+```yaml
+# ~/.hermes/config.yaml
+web:
+  search_backend: "openai-compatible-search"
+  extract_backend: "firecrawl"   # or tavily / exa / parallel
+```
+
+All three env vars are required — there is no default `OPENAI_COMPAT_SEARCH_MODEL`, since the provider deliberately doesn't assume Perplexity. Set it explicitly to `sonar`, `sonar-pro`, a LiteLLM route, etc.
+
+**Response parsing** order (the provider picks the first populated branch):
+1. `search_results[]` (native Perplexity schema — `{title, url, snippet}`)
+2. `citations[]` — list of URL strings **or** `{title, url, snippet}` dicts
+3. Fall back to `choices[0].message.content` as a single "Search Answer" row (capped at 2 000 chars)
+
+Or set via `hermes tools` → Web Search & Extract → OpenAI-compatible search.
+
+---
+
 ## Configuration
 
 ### Single backend
@@ -278,7 +318,7 @@ Set one provider for all web capabilities:
 ```yaml
 # ~/.hermes/config.yaml
 web:
-  backend: "searxng"   # firecrawl | searxng | tavily | exa | parallel
+  backend: "searxng"   # firecrawl | searxng | tavily | exa | parallel | openai-compatible-search
 ```
 
 ### Per-capability configuration
@@ -310,6 +350,8 @@ If no backend is explicitly configured, Hermes picks the first available one bas
 | `TAVILY_API_KEY` | tavily |
 | `EXA_API_KEY` | exa |
 | `SEARXNG_URL` | searxng |
+
+`openai-compatible-search` is **never** auto-selected — it requires all three of `OPENAI_COMPAT_SEARCH_BASE_URL`, `OPENAI_COMPAT_SEARCH_API_KEY`, and `OPENAI_COMPAT_SEARCH_MODEL` to be set, and must be opted into by name via `web.search_backend` or `web.backend`.
 
 ---
 

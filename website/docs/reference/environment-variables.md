@@ -123,6 +123,9 @@ For native Anthropic auth, Hermes prefers Claude Code's own credential files whe
 | `SEARXNG_URL` | SearXNG instance URL for free self-hosted web search — no API key required ([searxng.github.io](https://searxng.github.io/searxng/)) |
 | `TAVILY_BASE_URL` | Override the Tavily API endpoint. Useful for corporate proxies and self-hosted Tavily-compatible search backends. Same pattern as `GROQ_BASE_URL`. |
 | `EXA_API_KEY` | Exa API key for AI-native web search and contents ([exa.ai](https://exa.ai/)) |
+| `OPENAI_COMPAT_SEARCH_BASE_URL` | Base URL of an OpenAI-compatible `/chat/completions` endpoint used as a web search backend (e.g. `https://api.perplexity.ai`) |
+| `OPENAI_COMPAT_SEARCH_API_KEY` | API key sent as `Authorization: Bearer <key>` for the OpenAI-compatible search backend |
+| `OPENAI_COMPAT_SEARCH_MODEL` | Model name passed in the chat-completions request body (e.g. `sonar`, `sonar-pro`). No default — all three `OPENAI_COMPAT_SEARCH_*` vars must be set together |
 | `BROWSERBASE_API_KEY` | Browser automation ([browserbase.com](https://browserbase.com/)) |
 | `BROWSERBASE_PROJECT_ID` | Browserbase project ID |
 | `BROWSER_USE_API_KEY` | Browser Use cloud browser API key ([browser-use.com](https://browser-use.com/)) |

@@ -327,6 +327,17 @@ TOOL_CATEGORIES = {
                 "env_vars": [],
                 "post_setup": "ddgs",
             },
+            {
+                "name": "OpenAI-compatible search",
+                "badge": "bring-your-own · search only",
+                "tag": "Any /chat/completions endpoint with built-in search (Perplexity Sonar, LiteLLM, etc.)",
+                "web_backend": "openai-compatible-search",
+                "env_vars": [
+                    {"key": "OPENAI_COMPAT_SEARCH_BASE_URL", "prompt": "Base URL (e.g. https://api.perplexity.ai)"},
+                    {"key": "OPENAI_COMPAT_SEARCH_API_KEY", "prompt": "API key"},
+                    {"key": "OPENAI_COMPAT_SEARCH_MODEL", "prompt": "Model name (e.g. sonar, sonar-pro)"},
+                ],
+            },
         ],
     },
     "image_gen": {

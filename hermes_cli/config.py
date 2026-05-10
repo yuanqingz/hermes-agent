@@ -1932,6 +1932,27 @@ OPTIONAL_ENV_VARS = {
         "password": True,
         "category": "tool",
     },
+    "OPENAI_COMPAT_SEARCH_BASE_URL": {
+        "description": "Base URL of an OpenAI-compatible /chat/completions endpoint with built-in web search (e.g. Perplexity Sonar)",
+        "prompt": "OpenAI-compatible search base URL (e.g. https://api.perplexity.ai)",
+        "tools": ["web_search"],
+        "password": False,
+        "category": "tool",
+    },
+    "OPENAI_COMPAT_SEARCH_API_KEY": {
+        "description": "API key for the OpenAI-compatible search endpoint",
+        "prompt": "OpenAI-compatible search API key",
+        "tools": ["web_search"],
+        "password": True,
+        "category": "tool",
+    },
+    "OPENAI_COMPAT_SEARCH_MODEL": {
+        "description": "Model served by the OpenAI-compatible search endpoint (e.g. sonar, sonar-pro)",
+        "prompt": "OpenAI-compatible search model name",
+        "tools": ["web_search"],
+        "password": False,
+        "category": "tool",
+    },
     "BROWSERBASE_API_KEY": {
         "description": "Browserbase API key for cloud browser (optional — local browser works without this)",
         "prompt": "Browserbase API key",
